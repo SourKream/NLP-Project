@@ -13,7 +13,7 @@ from keras.utils.np_utils import to_categorical,accuracy
 from keras.layers.core import *
 from keras.layers.embeddings import Embedding
 from keras.layers.recurrent import LSTM,GRU
-# from keras.utils.visualize_util import plot # THIS IS BAD
+#from keras.utils.visualize_util import plot # THIS IS BAD
 # from data_reader import *
 from reader import *
 from myutils import *
@@ -89,6 +89,14 @@ def get_H_n(X):
     ans=X[:, -1, :]  # get last element from time dim
     return ans
 
+def get_H_hypo(X):
+    xmaxlen=K.params['xmaxlen']
+    return X[:, xmaxlen:, :]  # get elements L+1 to N
+
+def get_WH_Lpi(i):  # get element i
+    def get_X_i(X):
+        return X[:,i,:];
+    return get_X_i
 
 def get_Y(X):
     xmaxlen=K.params['xmaxlen']
@@ -132,14 +140,66 @@ def build_model(opts, verbose=False):
 
     model.add_node(Lambda(get_Y, output_shape=(L, k)), name='Y', input='dropout')
     # model.add_node(SliceAtLength((None,N,k),L), name='Y', input='dropout')
-    model.add_node(Dense(k,W_regularizer=l2(0.01)),name='Wh_n', input='h_n')
-    model.add_node(RepeatVector(L), name='Wh_n_cross_e', input='Wh_n')
+#    model.add_node(Dense(k,W_regularizer=l2(0.01)),name='Wh_n', input='h_n')
+#    model.add_node(RepeatVector(L), name='Wh_n_cross_e', input='Wh_n')
     model.add_node(TimeDistributedDense(k,W_regularizer=l2(0.01)), name='WY', input='Y')
-    model.add_node(Activation('tanh'), name='M', inputs=['Wh_n_cross_e', 'WY'], merge_mode='sum')
-    model.add_node(TimeDistributedDense(1,activation='softmax'), name='alpha', input='M')
-    model.add_node(Lambda(get_R, output_shape=(k,1)), name='_r', inputs=['Y','alpha'], merge_mode='join')
-    model.add_node(Reshape((k,)),name='r', input='_r')
-    model.add_node(Dense(k,W_regularizer=l2(0.01)), name='Wr', input='r')
+
+    ###########
+    # "dropout" layer contains all h vectors from h_1 to h_N
+
+    model.add_node(Lambda(get_H_hypo, output_shape=(N-L, k)), name='h_hypo', input='dropout')
+    model.add_node(TimeDistributedDense(k,W_regularizer=l2(0.01)), name='Wh_hypo', input='h_hypo')
+
+    # GET R1
+
+    f = get_WH_Lpi(0)
+    model.add_node(Lambda(f, output_shape=(k,)), name='Wh_lp1', input='Wh_hypo')
+    model.add_node(RepeatVector(L), name='Wh_lp1_cross_e', input='Wh_lp1')
+    model.add_node(Activation('tanh'), name='M1', inputs=['Wh_lp1_cross_e', 'WY'], merge_mode='sum')
+    model.add_node(TimeDistributedDense(1,activation='softmax'), name='alpha1', input='M1')
+    model.add_node(Lambda(get_R, output_shape=(k,1)), name='_r1', inputs=['Y','alpha1'], merge_mode='join')
+    model.add_node(Reshape((k,)),name='r1', input='_r1')
+    model.add_node(Dense(k,W_regularizer=l2(0.01),activation='tanh'), name='Tan_Wr1', input='r1')
+    model.add_node(RepeatVector(L), name='r1_cross_e', input='r1')
+
+    # GET R2, R3
+    for i in range(2,6):
+        f = get_WH_Lpi(i-1)
+        model.add_node(Lambda(f, output_shape=(k,)), name='Wh_lp'+str(i), input='Wh_hypo')
+        model.add_node(RepeatVector(L), name='Wh_lp'+str(i)+'_cross_e', input='Wh_lp'+str(i))
+        model.add_node(Activation('tanh'), name='M'+str(i), inputs=['Wh_lp'+str(i)+'_cross_e', 'WY', 'r'+str(i-1)+'_cross_e'], merge_mode='sum')
+        model.add_node(TimeDistributedDense(1,activation='softmax'), name='alpha'+str(i), input='M'+str(i))
+        model.add_node(Lambda(get_R, output_shape=(k,1)), name='_r'+str(i), inputs=['Y','alpha'+str(i)], merge_mode='join')
+        model.add_node(Reshape((k,)),name='*r'+str(i), input='_r'+str(i))
+        model.add_node(Layer(), merge_mode='sum', inputs=['*r'+str(i),'Tan_Wr'+str(i-1)], name='r'+str(i))
+        if i != 5:
+            model.add_node(Dense(k,W_regularizer=l2(0.01),activation='tanh'), name='Tan_Wr'+str(i), input='r'+str(i))
+            model.add_node(RepeatVector(L), name='r'+str(i)+'_cross_e', input='r'+str(i))
+
+
+# THIS WORKS FOR GETTING R2
+#    model.add_node(Lambda(get_WH_Lp2, output_shape=(k,)), name='Wh_lp2', input='Wh_hypo')
+#    model.add_node(RepeatVector(L), name='Wh_lp2_cross_e', input='Wh_lp2')
+#    model.add_node(Activation('tanh'), name='M2', inputs=['Wh_lp2_cross_e', 'WY', 'r1_cross_e'], merge_mode='sum')
+#    model.add_node(TimeDistributedDense(1,activation='softmax'), name='alpha2', input='M2')
+#    model.add_node(Lambda(get_R, output_shape=(k,1)), name='_r2', inputs=['Y','alpha2'], merge_mode='join')
+#    model.add_node(Reshape((k,)),name='*r2', input='_r2')
+#    model.add_node(Layer(), merge_mode='sum', inputs=['*r2','Tan_Wr1'], name='r2')
+
+#    model.add_node(Dense(k,W_regularizer=l2(0.01),activation='tanh'), name='Tan_Wr2', input='r2')
+#    model.add_node(RepeatVector(L), name='r2_cross_e', input='r2')
+
+
+
+    ###########
+
+#    model.add_node(Activation('tanh'), name='M', inputs=['Wh_n_cross_e', 'WY'], merge_mode='sum')
+#    model.add_node(TimeDistributedDense(1,activation='softmax'), name='alpha', input='M')
+#    model.add_node(Lambda(get_R, output_shape=(k,1)), name='_r', inputs=['Y','alpha'], merge_mode='join')
+#    model.add_node(Reshape((k,)),name='r', input='_r')
+#    model.add_node(Dense(k,W_regularizer=l2(0.01)), name='Wr', input='r')
+
+    model.add_node(Dense(k,W_regularizer=l2(0.01)), name='Wr', input='r5') ##### ADDED
     model.add_node(Dense(k,W_regularizer=l2(0.01)), name='Wh', input='h_n')
     model.add_node(Activation('tanh'), name='h_star', inputs=['Wr', 'Wh'], merge_mode='sum')
 
@@ -148,7 +208,7 @@ def build_model(opts, verbose=False):
     model.summary()
     if verbose:
         model.summary()
-    #   plot(model, 'model.png')
+#    plot(model, 'model2.png')
     # model.compile(loss={'output':'binary_crossentropy'}, optimizer=Adam())
     model.compile(loss={'output':'categorical_crossentropy'}, optimizer=Adam(options.lr))
     return model
@@ -272,6 +332,7 @@ if __name__ == "__main__":
 
     else:
         print '#BRK 2'
+
         history = model.fit(train_dict,
                         batch_size=options.batch_size,
                         nb_epoch=options.epochs,

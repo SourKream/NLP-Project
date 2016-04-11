@@ -3,6 +3,7 @@ import numpy as np
 
 np.random.seed(1337)  # for reproducibility
 import os
+import sys
 from keras.preprocessing.sequence import pad_sequences
 from keras.regularizers import l2, activity_l2
 from keras.callbacks import *
@@ -48,43 +49,6 @@ def get_params():
     print "no_padding", opts.no_padding
     return opts
 
-class AccCallBack(Callback):
-    def __init__(self, xtrain, ytrain, xdev, ydev, xtest, ytest, vocab, opts):
-        self.xtrain = xtrain
-        self.ytrain = ytrain
-        self.xdev = xdev
-        self.ydev = ydev
-        self.xtest = xtest
-        self.ytest = ytest
-        self.vocab=vocab
-        self.opts = opts
-
-
-    def on_epoch_end(self, epoch, logs={}):
-        train_acc=compute_acc(self.xtrain, self.ytrain, self.vocab, self.model, self.opts)
-        dev_acc=compute_acc(self.xdev, self.ydev, self.vocab, self.model, self.opts)
-        test_acc=compute_acc(self.xtest, self.ytest, self.vocab, self.model, self.opts)
-        logging.info('----------------------------------')
-        logging.info('Epoch ' + str(epoch) + ' train loss:'+str(logs.get('loss'))+' - Validation loss: ' + str(logs.get('val_loss')) + ' train acc: ' + str(train_acc[0])+'/'+str(train_acc[1]) + ' dev acc: ' + str(dev_acc[0])+'/'+str(dev_acc[1]) + ' test acc: ' + str(test_acc[0])+'/'+str(test_acc[1]))
-        logging.info('----------------------------------')
-
-class MyEmbedding(Embedding):
-    def __init__(self, input_dim, output_dim, use_mask=True, **kwargs):
-        self.use_mask = use_mask
-        super(MyEmbedding, self).__init__(input_dim, output_dim, **kwargs)
-
-    def get_output(self, train=False):
-        X = self.get_input(train)
-        if self.use_mask:
-            m = np.ones((self.input_dim, self.output_dim))
-            m[0] = [0]*self.output_dim
-            mask = K.variable(m, dtype=self.W.dtype)
-            outW = K.gather(self.W, X)
-            outM = K.gather(mask, X)
-            return outW*outM
-        else:
-            return K.gather(self.W, X)
-
 def get_H_n(X):
     ans=X[:, -1, :]  # get last element from time dim
     return ans
@@ -112,6 +76,7 @@ def get_R(X):
 def build_model(opts, verbose=False):
     model = Graph()
     k = 2 * opts.lstm_units
+#    k = opts.lstm_units
     L = opts.xmaxlen
     N = opts.xmaxlen + opts.ymaxlen + 1  # for delim
     print "x len", L, "total len", N
@@ -127,13 +92,17 @@ def build_model(opts, verbose=False):
     #                inputs=['x_emb', 'y_emb'], concat_axis=1)
 
     model.add_input(name='input', input_shape=(N,), dtype=int)
-    model.add_node(Embedding(opts.max_features, opts.emb, input_length=N), name='emb',
+#    model.add_node(GRU(opts.lstm_units, return_sequences=True), name='forward', input='input')
+
+    InitWeights = np.load('VocabMat.npy')
+    model.add_node(Embedding(InitWeights.shape[0], InitWeights.shape[1], input_length=N, weights=[InitWeights]), name='emb',
                    input='input')
     model.add_node(Dropout(0.1), name='d_emb', input='emb')
-    model.add_node(GRU(opts.lstm_units, return_sequences=True), name='forward', input='d_emb')
-    model.add_node(GRU(opts.lstm_units, return_sequences=True, go_backwards=True), name='backward', input='d_emb')
+    model.add_node(LSTM(opts.lstm_units, return_sequences=True), name='forward', input='d_emb')
+    model.add_node(LSTM(opts.lstm_units, return_sequences=True, go_backwards=True), name='backward', input='d_emb')
 
     model.add_node(Dropout(0.1), name='dropout', inputs=['forward','backward'])
+#    model.add_node(Dropout(0.1), name='dropout', input='forward')
     model.add_node(Lambda(get_H_n, output_shape=(k,)), name='h_n', input='dropout')
 
     # model.add_node(Lambda(XMaxLen(10), output_shape=(L, k)), name='Y', input='dropout')
@@ -151,7 +120,6 @@ def build_model(opts, verbose=False):
     model.add_node(TimeDistributedDense(k,W_regularizer=l2(0.01)), name='Wh_hypo', input='h_hypo')
 
     # GET R1
-
     f = get_WH_Lpi(0)
     model.add_node(Lambda(f, output_shape=(k,)), name='Wh_lp1', input='Wh_hypo')
     model.add_node(RepeatVector(L), name='Wh_lp1_cross_e', input='Wh_lp1')
@@ -164,7 +132,7 @@ def build_model(opts, verbose=False):
     model.add_node(RepeatVector(L), name='Wr1_cross_e', input='Wr1')
 
     # GET R2, R3, .. R_N
-    for i in range(2,N-L):
+    for i in range(2,N-L+1):
         f = get_WH_Lpi(i-1)
         model.add_node(Lambda(f, output_shape=(k,)), name='Wh_lp'+str(i), input='Wh_hypo')
         model.add_node(RepeatVector(L), name='Wh_lp'+str(i)+'_cross_e', input='Wh_lp'+str(i))
@@ -173,27 +141,10 @@ def build_model(opts, verbose=False):
         model.add_node(Lambda(get_R, output_shape=(k,1)), name='_r'+str(i), inputs=['Y','alpha'+str(i)], merge_mode='join')
         model.add_node(Reshape((k,)),name='*r'+str(i), input='_r'+str(i))
         model.add_node(Layer(), merge_mode='sum', inputs=['*r'+str(i),'Tan_Wr'+str(i-1)], name='r'+str(i))
-        if i != (N-L-1):
+        if i != (N-L):
             model.add_node(Dense(k,W_regularizer=l2(0.01),activation='tanh'), name='Tan_Wr'+str(i), input='r'+str(i))
             model.add_node(Dense(k,W_regularizer=l2(0.01)), name='Wr'+str(i), input='r'+str(i))
             model.add_node(RepeatVector(L), name='Wr'+str(i)+'_cross_e', input='Wr'+str(i))
-
-
-# THIS WORKS FOR GETTING R2
-#    model.add_node(Lambda(get_WH_Lp2, output_shape=(k,)), name='Wh_lp2', input='Wh_hypo')
-#    model.add_node(RepeatVector(L), name='Wh_lp2_cross_e', input='Wh_lp2')
-#    model.add_node(Activation('tanh'), name='M2', inputs=['Wh_lp2_cross_e', 'WY', 'r1_cross_e'], merge_mode='sum')
-#    model.add_node(TimeDistributedDense(1,activation='softmax'), name='alpha2', input='M2')
-#    model.add_node(Lambda(get_R, output_shape=(k,1)), name='_r2', inputs=['Y','alpha2'], merge_mode='join')
-#    model.add_node(Reshape((k,)),name='*r2', input='_r2')
-#    model.add_node(Layer(), merge_mode='sum', inputs=['*r2','Tan_Wr1'], name='r2')
-
-#    model.add_node(Dense(k,W_regularizer=l2(0.01),activation='tanh'), name='Tan_Wr2', input='r2')
-#    model.add_node(RepeatVector(L), name='r2_cross_e', input='r2')
-
-
-
-    ###########
 
 #    model.add_node(Activation('tanh'), name='M', inputs=['Wh_n_cross_e', 'WY'], merge_mode='sum')
 #    model.add_node(TimeDistributedDense(1,activation='softmax'), name='alpha', input='M')
@@ -201,7 +152,7 @@ def build_model(opts, verbose=False):
 #    model.add_node(Reshape((k,)),name='r', input='_r')
 #    model.add_node(Dense(k,W_regularizer=l2(0.01)), name='Wr', input='r')
 
-    model.add_node(Dense(k,W_regularizer=l2(0.01)), name='Wr', input='r'+str(N-L-1)) ##### ADDED
+    model.add_node(Dense(k,W_regularizer=l2(0.01)), name='Wr', input='r'+str(N-L)) ##### ADDED
     model.add_node(Dense(k,W_regularizer=l2(0.01)), name='Wh', input='h_n')
     model.add_node(Activation('tanh'), name='h_star', inputs=['Wr', 'Wh'], merge_mode='sum')
 
@@ -280,11 +231,30 @@ def setup_logger(config_str):
                     filename=datetime.now().strftime('mylogfile_%H_%M_%d_%m_%Y.log'),
                     filemode='w')
 
+class WeightSharing(Callback):
+    def __init__(self, shared):
+        self.shared = shared
+
+    def on_batch_end(self, batch, logs={}):
+        weights = np.mean([self.model.nodes[n].get_weights()[0] for n in self.shared],axis=0)
+        biases = np.mean([self.model.nodes[n].get_weights()[1] for n in self.shared],axis=0)
+        for n in self.shared:
+            self.model.nodes[n].set_weights([weights, biases])
+
 if __name__ == "__main__":
-    train=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/train.txt')]
-    dev=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/dev.txt')]
-    test=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/test.txt')]
-    vocab=get_vocab(train)
+#    train=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/train.txt')]
+#    dev=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/dev.txt')]
+#    test=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/test.txt')]
+
+    train=[l.strip().split('\t') for l in open('train.txt')]
+    dev=[l.strip().split('\t') for l in open('dev.txt')]
+    test=[l.strip().split('\t') for l in open('test.txt')]
+
+#    vocab=get_vocab(train)
+    with open('Dictionary.txt','r') as inf:
+        vocab = eval(inf.read())
+
+
     print "vocab (incr. maxfeatures accordingly):",len(vocab)
     X_train,Y_train,Z_train=load_data(train,vocab)
     X_dev,Y_dev,Z_dev=load_data(dev,vocab)
@@ -295,8 +265,8 @@ if __name__ == "__main__":
     setattr(K,'params',params)
 
     config_str = getConfig(options)
-    MODEL_ARCH = "arch_att" + config_str + ".yaml"
-    MODEL_WGHT = "weights_att" + config_str + ".weights"
+    MODEL_ARCH = "/home/ee/btech/ee1130798/Code/Model/arch_att" + config_str + ".yaml"
+    MODEL_WGHT = "/home/ee/btech/ee1130798/Code/Model/weights_att" + config_str + ".weights"
    
     MAXLEN=options.xmaxlen
     X_train = pad_sequences(X_train, maxlen=MAXLEN,value=vocab["unk"],padding='pre')
@@ -317,7 +287,7 @@ if __name__ == "__main__":
     print X_train.shape,Y_train.shape,net_train.shape
     print map_to_txt(net_train[0],vocab),Z_train[0]
     print map_to_txt(net_train[1],vocab),Z_train[1]
-    setup_logger(config_str)
+#    setup_logger(config_str)
 
     assert net_train[0][options.xmaxlen] == 1
     train_dict = {'input': net_train, 'output': Z_train}
@@ -325,8 +295,28 @@ if __name__ == "__main__":
     print 'Build model...'
     model = build_model(options)
     print '#BRK 0'
-    logging.info(vars(options))
-    logging.info("train size: "+str(len(net_train))+" dev size: "+str(len(net_dev))+" test size: "+str(len(net_test)))
+#    logging.info(vars(options))
+#    logging.info("train size: "+str(len(net_train))+" dev size: "+str(len(net_dev))+" test size: "+str(len(net_test)))
+
+#    def data2vec(data, RMatrix):
+#        X = np.empty((300,len(data[0])))
+#        for sample in data:
+#            rep = np.empty((300,1))
+#            for word in sample:
+#                rep = np.hstack((rep, RMatrix[word].reshape(300,1)))
+#            rep = rep[:,1:]
+#            X = np.dstack((X, rep))
+#        X = X.swapaxes(0,2)
+#        return X[1:,:,:]
+
+#    def generate_GloVe_embedding_samples(net_train, Z_train, batch_size):
+#        RMatrix = np.load('VocabMat.npy')
+#        num_batches = len(net_train)/batch_size
+#        while 1:
+#            for idx in xrange(0, num_batches*batch_size, batch_size):
+#                X_train = data2vec(net_train[idx:idx+batch_size], RMatrix)
+#                yield {'input': X_train, 'output': Z_train}
+
     if options.load_save and os.path.exists(MODEL_ARCH) and os.path.exists(MODEL_WGHT):
         print '#BRK 1'
         print("Loading pre-trained model from", MODEL_WGHT)
@@ -338,12 +328,29 @@ if __name__ == "__main__":
 
     else:
         print '#BRK 2'
+        group1 = []
+        group2 = []
+        group3 = []
+        for i in range(1,options.ymaxlen+1):
+            group1.append('Tan_Wr'+str(i))
+            group2.append('Wr'+str(i))
+            group3.append('alpha'+str(i))
+        group3.append('alpha'+str(options.ymaxlen+1))
+
+#        history = model.fit_generator(generate_GloVe_embedding_samples(net_train, Z_train, options.batch_size), 
+#                        len(net_train), 
+#                        options.epochs, 
+#                        show_accuracy=True, 
+#                        callbacks=[WeightSharing(group1), WeightSharing(group2), WeightSharing(group3)],
+#                        validation_data=generate_GloVe_embedding_samples(net_dev, Z_dev, len(Z_dev)), 
+#                        nb_val_samples=len(Z_dev))
+
         history = model.fit(train_dict,
                         batch_size=options.batch_size,
                         nb_epoch=options.epochs,
                         validation_data=dev_dict,
-                        callbacks=[AccCallBack(net_train,Z_train,net_dev,Z_dev,net_test,Z_test,vocab,options)]
-    )
+                        show_accuracy=True,
+                        callbacks=[WeightSharing(group1), WeightSharing(group2), WeightSharing(group3)])
 
         train_acc=compute_acc(net_train, Z_train, vocab, model, options)
         dev_acc=compute_acc(net_dev, Z_dev, vocab, model, options)

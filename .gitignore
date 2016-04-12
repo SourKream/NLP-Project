@@ -1,3 +1,8 @@
 .DS_Store
 *.pyc
 *.log
+snli_1.0.zip
+train.txt
+test.txt
+dev.txt
+VocabMat.npy

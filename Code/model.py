@@ -94,7 +94,7 @@ def build_model(opts, verbose=False):
     model.add_input(name='input', input_shape=(N,), dtype=int)
 #    model.add_node(GRU(opts.lstm_units, return_sequences=True), name='forward', input='input')
 
-    InitWeights = np.load('VocabMat.npy')
+    InitWeights = np.load('/home/ee/btech/ee1130798/Code/VocabMat.npy')
     model.add_node(Embedding(InitWeights.shape[0], InitWeights.shape[1], input_length=N, weights=[InitWeights]), name='emb',
                    input='input')
     model.add_node(Dropout(0.1), name='d_emb', input='emb')
@@ -242,16 +242,16 @@ class WeightSharing(Callback):
             self.model.nodes[n].set_weights([weights, biases])
 
 if __name__ == "__main__":
-#    train=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/train.txt')]
-#    dev=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/dev.txt')]
-#    test=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/test.txt')]
+    train=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/train.txt')]
+    dev=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/dev.txt')]
+    test=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/test.txt')]
 
-    train=[l.strip().split('\t') for l in open('train.txt')]
-    dev=[l.strip().split('\t') for l in open('dev.txt')]
-    test=[l.strip().split('\t') for l in open('test.txt')]
+#    train=[l.strip().split('\t') for l in open('train.txt')]
+#    dev=[l.strip().split('\t') for l in open('dev.txt')]
+#    test=[l.strip().split('\t') for l in open('test.txt')]
 
 #    vocab=get_vocab(train)
-    with open('Dictionary.txt','r') as inf:
+    with open('/home/ee/btech/ee1130798/Code/Dictionary.txt','r') as inf:
         vocab = eval(inf.read())
 
 

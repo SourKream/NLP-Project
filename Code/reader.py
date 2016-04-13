@@ -16,18 +16,11 @@ def load_data(train,vocab,labels={'neutral':0,'entailment':1,'contradiction':2})
     for p,h,l in train:
         p=map_to_idx(tokenize(p),vocab)
         h=map_to_idx(tokenize(h),vocab)
-        # print 'P:',map_to_txt(p,vocab)
-        # print 'H:',map_to_txt(h,vocab)
-        # print p+" DELIMITER "+h
-        # ph=map_to_idx(tokenize(p+" delimiter "+h),vocab)
-        # print 'PH:',map_to_txt(ph,vocab)
-        # print 'L:',l
         if l in labels:         # get rid of '-'
             X+=[p]
             Y+=[h]
             Z+=[labels[l]]
     return X,Y,Z
-
 
 def get_vocab(data):
     vocab=Counter()
@@ -53,7 +46,7 @@ if __name__=="__main__":
     train=[l.strip().split('\t') for l in open('train.txt')][:20000]
     dev=[l.strip().split('\t') for l in open('dev.txt')]
     test=[l.strip().split('\t') for l in open('test.txt')]
-    labels={'contradiction':-1,'neutral':0,'entailment':1}
+    labels={'neutral':0,'entailment':1,'contradiction':2}
 
     vocab=get_vocab(train)
     X_train,Y_train,Z_train=load_data(train,vocab)

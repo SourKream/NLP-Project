@@ -6,3 +6,5 @@ train.txt
 test.txt
 dev.txt
 VocabMat.npy
+Logs/
+Models/

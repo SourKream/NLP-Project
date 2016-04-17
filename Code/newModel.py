@@ -12,6 +12,7 @@ from keras.utils.np_utils import to_categorical,accuracy
 from keras.layers.core import *
 from keras.layers.embeddings import Embedding
 from keras.layers.recurrent import LSTM,GRU
+from keras.layers import *
 #from keras.utils.visualize_util import plot, to_graph # THIS IS BAD
 from reader import *
 from myutils import *
@@ -31,6 +32,7 @@ def get_params():
     parser.add_argument('-verbose', action="store", default=False, dest="verbose", type=bool)
     parser.add_argument('-l2', action="store", default=0.0003, dest="l2", type=float)
     parser.add_argument('-dropout', action="store", default=0.1, dest="dropout", type=float)
+    parser.add_argument('-local', action="store", default=False, dest="local", type=bool)
     opts = parser.parse_args(sys.argv[1:])
     print "lstm_units", opts.lstm_units
     print "epochs", opts.epochs
@@ -60,11 +62,11 @@ def get_Y(X):
     return X[:, :xmaxlen, :]  # get first xmaxlen elem from time dim
 
 def get_R(X):
-    Y, alpha = X.values()  # Y should be (None,L,k) and alpha should be (None,L,1) and ans should be (None, k,1)
+    Y = X[:,:,:-1]
+    alpha = X[:,:,-1]
     tmp=K.permute_dimensions(Y,(0,)+(2,1))  # copied from permute layer, Now Y is (None,k,L) and alpha is always (None,L,1)
     ans=K.T.batched_dot(tmp,alpha)
     return ans
-
 
 def build_model(opts, verbose=False):
 
@@ -91,13 +93,13 @@ def build_model(opts, verbose=False):
     h_n = Lambda(get_H_n,output_shape=(k,))(dropout)
 
     Y = Lambda(get_Y,output_shape=(L, k))(dropout)
-    WY = TimeDistributedDense(k,W_regularizer=l2(0.01))(Y)
+    WY = TimeDistributed(Dense(k,W_regularizer=l2(0.01)))(Y)
 
     ###########
     # "dropout" layer contains all h vectors from h_1 to h_N
 
     h_hypo = Lambda(get_H_hypo, output_shape=(N-L, k))(dropout)
-    Wh_hypo = TimeDistributedDense(k,W_regularizer=l2(0.01))(h_hypo)
+    Wh_hypo = TimeDistributed(Dense(k,W_regularizer=l2(0.01)))(h_hypo)
 
     # GET R1
     f = get_WH_Lpi(0)
@@ -107,17 +109,24 @@ def build_model(opts, verbose=False):
     Sum_Wh_lp_cross_e_WY = [merge([Wh_lp_cross_e[0], WY],mode='sum')]
     M = [Activation('tanh')(Sum_Wh_lp_cross_e_WY[0])]    
 
-    alpha_TimeDistributedDense_Layer = TimeDistributedDense(1,activation='softmax')
-    alpha = [alpha_TimeDistributedDense_Layer(M[0])]
+#    alpha_TimeDistributedDense_Layer = TimeDistributed(Dense(1,activation='softmax'))
+    Distributed_Dense_init_weight = ((2.0/np.sqrt(k)) * np.random.rand(k,1)) - (1.0 / np.sqrt(k))
+    Distributed_Dense_init_bias = ((2.0) * np.random.rand(1,)) - (1.0)
+    alpha = [TimeDistributed(Dense(1,activation='softmax', weights=[Distributed_Dense_init_weight, Distributed_Dense_init_bias]), name='alpha1')(M[0])]
 
     Join_Y_alpha = [merge([Y, alpha[0]],mode='concat',concat_axis=2)]    
     _r = [Lambda(get_R, output_shape=(k,1))(Join_Y_alpha[0])]
     r = [Reshape((k,))(_r[0])]
 
-    Tan_Wr_Dense_Layer = Dense(k,W_regularizer=l2(0.01),activation='tanh')
-    Wr_Dense_layer = Dense(k,W_regularizer=l2(0.01))
-    Tan_Wr = [Tan_Wr_Dense_Layer(r[0])]
-    Wr = [Wr_Dense_layer(r[0])]
+#    Tan_Wr_Dense_Layer = Dense(k,W_regularizer=l2(0.01),activation='tanh')
+#    Wr_Dense_layer = Dense(k,W_regularizer=l2(0.01))
+    Tan_Wr_init_weight = 2*(1/np.sqrt(k))*np.random.rand(k,k) - (1/np.sqrt(k))
+    Tan_Wr_init_bias = 2*(1/np.sqrt(k))*np.random.rand(k,) - (1/np.sqrt(k))
+    Tan_Wr = [Dense(k,W_regularizer=l2(0.01),activation='tanh', name='Tan_Wr1', weights=[Tan_Wr_init_weight, Tan_Wr_init_bias])(r[0])]
+
+    Wr_init_weight = 2*(1/np.sqrt(k))*np.random.rand(k,k) - (1/np.sqrt(k))
+    Wr_init_bias = 2*(1/np.sqrt(k))*np.random.rand(k,) - (1/np.sqrt(k))
+    Wr = [Dense(k,W_regularizer=l2(0.01), name='Wr1', weights=[Wr_init_weight, Wr_init_bias])(r[0])]
     Wr_cross_e = [RepeatVector(L)(Wr[0])]
 
     star_r = []
@@ -129,7 +138,7 @@ def build_model(opts, verbose=False):
 
         Sum_Wh_lp_cross_e_WY.append( merge([Wh_lp_cross_e[i-1], WY, Wr_cross_e[i-2]],mode='sum') )
         M.append( Activation('tanh')(  Sum_Wh_lp_cross_e_WY[i-1] ) )
-        alpha.append( alpha_TimeDistributedDense_Layer(M[i-1]) )
+        alpha.append( TimeDistributed(Dense(1,activation='softmax'), name='alpha'+str(i))(M[i-1]) )
 
         Join_Y_alpha.append( merge([Y, alpha[i-1]],mode='concat',concat_axis=2) )
         _r.append( Lambda(get_R, output_shape=(k,1))(Join_Y_alpha[i-1]) )
@@ -137,8 +146,8 @@ def build_model(opts, verbose=False):
         r.append( merge([star_r[i-2], Tan_Wr[i-2]], mode='sum') )
 
         if i != (N-L):
-            Tan_Wr.append( Tan_Wr_Dense_Layer(r[i-1]) )
-            Wr.append( Wr_Dense_layer(r[i-1]) )
+            Tan_Wr.append( Dense(k,W_regularizer=l2(0.01),activation='tanh', name='Tan_Wr'+str(i))(r[i-1]) )
+            Wr.append( Dense(k,W_regularizer=l2(0.01), name='Wr'+str(i))(r[i-1]) )
             Wr_cross_e.append( RepeatVector(L)(Wr[i-1]) )
 
 
@@ -159,7 +168,7 @@ def build_model(opts, verbose=False):
 
 
 def compute_acc(X, Y, vocab, model, opts, filename=None):
-    scores=model.predict({'input': X},batch_size=options.batch_size)['output']
+    scores=model.predict(X,batch_size=options.batch_size)
     prediction=np.zeros(scores.shape)
     for i in range(scores.shape[0]):
         l=np.argmax(scores[i])
@@ -218,19 +227,24 @@ class WeightSharing(Callback):
     def __init__(self, shared):
         self.shared = shared
 
+    def find_layer_by_name(self, name):
+        for l in self.model.layers:
+            if l.name == name:
+                return l
+
     def on_batch_end(self, batch, logs={}):
-        weights = np.mean([self.model.nodes[n].get_weights()[0] for n in self.shared],axis=0)
-        biases = np.mean([self.model.nodes[n].get_weights()[1] for n in self.shared],axis=0)
+        weights = np.mean([self.find_layer_by_name(n).get_weights()[0] for n in self.shared],axis=0)
+        biases = np.mean([self.find_layer_by_name(n).get_weights()[1] for n in self.shared],axis=0)
         for n in self.shared:
-            self.model.nodes[n].set_weights([weights, biases])
+            self.find_layer_by_name(n).set_weights([weights, biases])
 
 if __name__ == "__main__":
     options=get_params()
 
     if options.local:
-        train=[l.strip().split('\t') for l in open('SNLI/train.txt')]
-        dev=[l.strip().split('\t') for l in open('SNLI/dev.txt')]
-        test=[l.strip().split('\t') for l in open('SNLI/test.txt')]
+        train=[l.strip().split('\t') for l in open('../Data/tinyTrain.txt')]
+        dev=[l.strip().split('\t') for l in open('../Data/tinyVal.txt')]
+        test=[l.strip().split('\t') for l in open('../Data/tinyTest.txt')]
     else:
         train=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/train.txt')]
         dev=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/dev.txt')]
@@ -280,7 +294,7 @@ if __name__ == "__main__":
 
     assert net_train[0][options.xmaxlen] == 1
     train_dict = {'input': net_train, 'output': Z_train}
-    dev_dict = {'input': net_dev, 'output': Z_dev}
+    dev_dict = (net_dev, Z_dev)
 
 #    def data2vec(data, RMatrix):
 #        X = np.empty((300,len(data[0])))
@@ -332,8 +346,7 @@ if __name__ == "__main__":
                         batch_size=options.batch_size,
                         nb_epoch=options.epochs,
                         validation_data=dev_dict,
-                        show_accuracy=True)#,
-#                        callbacks=[WeightSharing(group1), WeightSharing(group2), WeightSharing(group3)])
+                        callbacks=[WeightSharing(group1), WeightSharing(group2), WeightSharing(group3)])
 
         train_acc=compute_acc(net_train, Z_train, vocab, model, options)
         dev_acc=compute_acc(net_dev, Z_dev, vocab, model, options)

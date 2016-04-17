@@ -83,7 +83,11 @@ def build_model(opts, verbose=False):
 
     input_node = Input(shape=(N,), dtype='int32')
 
-    InitWeights = np.load('/home/ee/btech/ee1130798/Code/VocabMat.npy')
+    if opts.local:
+        InitWeights = np.load('VocabMat.npy')
+    else:   
+        InitWeights = np.load('/home/ee/btech/ee1130798/Code/VocabMat.npy')
+
     emb = Embedding(InitWeights.shape[0],InitWeights.shape[1],input_length=N,weights=[InitWeights])(input_node)
     d_emb = Dropout(0.1)(emb)
 
@@ -146,7 +150,7 @@ def build_model(opts, verbose=False):
             Wr_cross_e.append( RepeatVector(L)(Wr[i-1]) )
 
 
-    Wr = Dense(k,W_regularizer=l2(0.01))(r[N-L-1])) 
+    Wr = Dense(k,W_regularizer=l2(0.01))(r[N-L-1]) 
     Wh = Dense(k,W_regularizer=l2(0.01))(h_n)
     Sum_Wr_Wh = merge([Wr, Wh],mode='sum')
     h_star = Activation('tanh')(Sum_Wr_Wh)    
@@ -163,7 +167,7 @@ def build_model(opts, verbose=False):
 
 
 def compute_acc(X, Y, vocab, model, opts):
-    scores=model.predict({'input': X},batch_size=options.batch_size)['output']
+    scores=model.predict(X,batch_size=options.batch_size)
     prediction=np.zeros(scores.shape)
     for i in range(scores.shape[0]):
         l=np.argmax(scores[i])
@@ -172,7 +176,7 @@ def compute_acc(X, Y, vocab, model, opts):
     plabels=np.argmax(prediction,axis=1)
     tlabels=np.argmax(Y,axis=1)
     acc = accuracy(tlabels,plabels)
-    return acc,acc
+    return acc
 
 def getConfig(opts):
     conf=[opts.xmaxlen,
@@ -233,24 +237,28 @@ class WeightSharing(Callback):
             self.model.nodes[n].set_weights([weights, biases])
 
 if __name__ == "__main__":
-    train=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/train.txt')]
-    dev=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/dev.txt')]
-    test=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/test.txt')]
+    options=get_params()
 
-#    train=[l.strip().split('\t') for l in open('train.txt')]
-#    dev=[l.strip().split('\t') for l in open('dev.txt')]
-#    test=[l.strip().split('\t') for l in open('test.txt')]
+    if options.local:
+        train=[l.strip().split('\t') for l in open('SNLI/train.txt')]
+        dev=[l.strip().split('\t') for l in open('SNLI/dev.txt')]
+        test=[l.strip().split('\t') for l in open('SNLI/test.txt')]
+    else:
+        train=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/train.txt')]
+        dev=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/dev.txt')]
+        test=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/test.txt')]
 
-#    vocab=get_vocab(train)
-    with open('/home/ee/btech/ee1130798/Code/Dictionary.txt','r') as inf:
-        vocab = eval(inf.read())
-
+    if options.local:
+        with open('Dictionary.txt','r') as inf:
+            vocab = eval(inf.read())
+    else:
+        with open('/home/ee/btech/ee1130798/Code/Dictionary.txt','r') as inf:
+            vocab = eval(inf.read())
 
     print "vocab (incr. maxfeatures accordingly):",len(vocab)
     X_train,Y_train,Z_train=load_data(train,vocab)
     X_dev,Y_dev,Z_dev=load_data(dev,vocab)
     X_test,Y_test,Z_test=load_data(test,vocab)
-    options=get_params()
    
     params={'xmaxlen':options.xmaxlen}
     setattr(K,'params',params)
@@ -341,13 +349,12 @@ if __name__ == "__main__":
                         nb_epoch=options.epochs,
                         validation_data=dev_dict,
                         show_accuracy=True)
-        print "TRAINED"
 
-#        train_acc=compute_acc(net_train, Z_train, vocab, model, options)
-#        dev_acc=compute_acc(net_dev, Z_dev, vocab, model, options)
-#        test_acc=compute_acc(net_test, Z_test, vocab, model, options)
-#        print "Training Accuracy: ", train_acc
-#        print "Dev Accuracy: ", dev_acc
-#        print "Testing Accuracy: ", test_acc
+        train_acc=compute_acc(net_train, Z_train, vocab, model, options)
+        dev_acc=compute_acc(net_dev, Z_dev, vocab, model, options)
+        test_acc=compute_acc(net_test, Z_test, vocab, model, options)
+        print "Training Accuracy: ", train_acc
+        print "Dev Accuracy: ", dev_acc
+        print "Testing Accuracy: ", test_acc
 
 #        save_model(model,MODEL_WGHT,MODEL_ARCH)

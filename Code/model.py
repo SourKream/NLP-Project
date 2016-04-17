@@ -26,7 +26,7 @@ def get_params():
     parser.add_argument('-xmaxlen', action="store", default=30, dest="xmaxlen", type=int)
     parser.add_argument('-ymaxlen', action="store", default=20, dest="ymaxlen", type=int)
     parser.add_argument('-nopad', action="store", default=False, dest="no_padding", type=bool)
-    parser.add_argument('-lr', action="store", default=0.001, dest="lr", type=float)
+    parser.add_argument('-lr', action="store", default=0.003, dest="lr", type=float)
     parser.add_argument('-load', action="store", default=False, dest="load_save", type=bool)
     parser.add_argument('-verbose', action="store", default=False, dest="verbose", type=bool)
     parser.add_argument('-l2', action="store", default=0.0003, dest="l2", type=float)
@@ -75,8 +75,11 @@ def build_model(opts, verbose=False):
 
     model.add_input(name='input', input_shape=(N,), dtype=int)
 
-    InitWeights = np.load('/home/ee/btech/ee1130798/Code/VocabMat.npy')
-#    InitWeights = np.load('VocabMat.npy')
+    if opts.local:
+        InitWeights = np.load('VocabMat.npy')
+    else:   
+        InitWeights = np.load('/home/ee/btech/ee1130798/Code/VocabMat.npy')
+
     model.add_node(Embedding(InitWeights.shape[0], InitWeights.shape[1], input_length=N, weights=[InitWeights]), name='emb',
                    input='input')
     model.add_node(Dropout(opts.dropout), name='d_emb', input='emb')
@@ -217,42 +220,46 @@ class WeightSharing(Callback):
             self.model.nodes[n].set_weights([weights, biases])
 
 if __name__ == "__main__":
-    train=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/train.txt')]
-    dev=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/dev.txt')]
-    test=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/test.txt')]
+    options=get_params()
 
-#    train=[l.strip().split('\t') for l in open('SNLI/train.txt')]
-#    dev=[l.strip().split('\t') for l in open('SNLI/dev.txt')]
-#    test=[l.strip().split('\t') for l in open('SNLI/test.txt')]
+    if options.local:
+        train=[l.strip().split('\t') for l in open('SNLI/train.txt')]
+        dev=[l.strip().split('\t') for l in open('SNLI/dev.txt')]
+        test=[l.strip().split('\t') for l in open('SNLI/test.txt')]
+    else:
+        train=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/train.txt')]
+        dev=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/dev.txt')]
+        test=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/test.txt')]
 
-#    vocab=get_vocab(train)
-#    with open('Dictionary.txt','r') as inf:
-    with open('/home/ee/btech/ee1130798/Code/Dictionary.txt','r') as inf:
-        vocab = eval(inf.read())
+    if options.local:
+        with open('Dictionary.txt','r') as inf:
+            vocab = eval(inf.read())
+    else:
+        with open('/home/ee/btech/ee1130798/Code/Dictionary.txt','r') as inf:
+            vocab = eval(inf.read())
 
     print "vocab size: ",len(vocab)
     X_train,Y_train,Z_train=load_data(train,vocab)
     X_dev,Y_dev,Z_dev=load_data(dev,vocab)
     X_test,Y_test,Z_test=load_data(test,vocab)
-    options=get_params()
    
     params={'xmaxlen':options.xmaxlen}
     setattr(K,'params',params)
 
     config_str = getConfig(options)
-    MODEL_ARCH = "/home/ee/btech/ee1130798/Code/Models/arch_att" + config_str + ".yaml"
-    MODEL_WGHT = "/home/ee/btech/ee1130798/Code/Models/weights_att" + config_str + ".weights"
+    MODEL_ARCH = "/home/ee/btech/ee1130798/Code/Models/ATRarch_att" + config_str + ".yaml"
+    MODEL_WGHT = "/home/ee/btech/ee1130798/Code/Models/ATRweights_att" + config_str + ".weights"
 #    MODEL_ARCH = "/Users/Shantanu/Documents/College/SemVI/COL772/Project/Code/Models/GloveEmbd/arch_att" + config_str + ".yaml"
 #    MODEL_WGHT = "/Users/Shantanu/Documents/College/SemVI/COL772/Project/Code/Models/GloveEmbd/weights_att" + config_str + ".weights"
    
     XMAXLEN=options.xmaxlen
     YMAXLEN=options.ymaxlen
-    X_train = pad_sequences(X_train, maxlen=XMAXLEN,value=vocab["unk"],padding='pre')
-    X_dev = pad_sequences(X_dev, maxlen=XMAXLEN,value=vocab["unk"],padding='pre')
-    X_test = pad_sequences(X_test, maxlen=XMAXLEN,value=vocab["unk"],padding='pre')
-    Y_train = pad_sequences(Y_train, maxlen=YMAXLEN,value=vocab["unk"],padding='post')
-    Y_dev = pad_sequences(Y_dev, maxlen=YMAXLEN,value=vocab["unk"],padding='post')
-    Y_test = pad_sequences(Y_test, maxlen=YMAXLEN,value=vocab["unk"],padding='post')
+    X_train = pad_sequences(X_train, maxlen=XMAXLEN,value=vocab["pad_tok"],padding='pre')
+    X_dev = pad_sequences(X_dev, maxlen=XMAXLEN,value=vocab["pad_tok"],padding='pre')
+    X_test = pad_sequences(X_test, maxlen=XMAXLEN,value=vocab["pad_tok"],padding='pre')
+    Y_train = pad_sequences(Y_train, maxlen=YMAXLEN,value=vocab["pad_tok"],padding='post')
+    Y_dev = pad_sequences(Y_dev, maxlen=YMAXLEN,value=vocab["pad_tok"],padding='post')
+    Y_test = pad_sequences(Y_test, maxlen=YMAXLEN,value=vocab["pad_tok"],padding='post')
    
     net_train=concat_in_out(X_train,Y_train,vocab)
     net_dev=concat_in_out(X_dev,Y_dev,vocab)
@@ -336,7 +343,7 @@ if __name__ == "__main__":
         print "Training Accuracy: ", train_acc
         print "Dev Accuracy: ", dev_acc
         print "Testing Accuracy: ", test_acc
-        path = "/home/ee/btech/ee1130798/Code/Test_Predictions"+ config_str +".txt"
-        test_acc=compute_acc(net_test, Z_test, vocab, model, options, path)
+#        path = "/home/ee/btech/ee1130798/Code/ATR_Test_Predictions"+ config_str +".txt"
+#        test_acc=compute_acc(net_test, Z_test, vocab, model, options, path)
 
-        save_model(model,MODEL_WGHT,MODEL_ARCH)
+#        save_model(model,MODEL_WGHT,MODEL_ARCH)

@@ -31,6 +31,7 @@ def get_params():
     parser.add_argument('-verbose', action="store", default=False, dest="verbose", type=bool)
     parser.add_argument('-l2', action="store", default=0.0003, dest="l2", type=float)
     parser.add_argument('-dropout', action="store", default=0.1, dest="dropout", type=float)
+    parser.add_argument('-local', action="store", default=False, dest="local", type=bool)
     opts = parser.parse_args(sys.argv[1:])
     print "lstm_units", opts.lstm_units
     print "epochs", opts.epochs

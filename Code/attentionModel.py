@@ -19,6 +19,7 @@ from myutils import *
 import logging
 from datetime import datetime
 from multiAttentionRNN import multiAttentionRNN
+from mLSTM import mLSTM
 
 def get_params():
     parser = argparse.ArgumentParser(description='Short sample app')
@@ -91,24 +92,25 @@ def build_model(opts, verbose=False):
     forward_backward = merge([forward,backward],mode='concat',concat_axis=2)
     dropout = Dropout(0.1)(forward_backward)
 
-    h_n = Lambda(get_H_n,output_shape=(k,))(dropout)
+    # h_n = Lambda(get_H_n,output_shape=(k,))(dropout)
 
-    r_n = multiAttentionRNN(k, return_sequences=False)(dropout)
+    r_n = mLSTM(k,W_regularizer=l2(0.01), U_regularizer=l2(0.01),b_regularizer=l2(0.01),return_sequences=False)(dropout)
 
 
-    Wr = Dense(k,W_regularizer=l2(0.01))(r_n) 
-    Wh = Dense(k,W_regularizer=l2(0.01))(h_n)
-    Sum_Wr_Wh = merge([Wr, Wh],mode='sum')
-    h_star = Activation('tanh')(Sum_Wr_Wh)    
+    # Wr = Dense(k,W_regularizer=l2(0.01))(r_n) 
+    # Wh = Dense(k,W_regularizer=l2(0.01))(h_n)
+    # Sum_Wr_Wh = merge([Wr, Wh],mode='sum')
+    # h_star = Activation('tanh')(Sum_Wr_Wh)    
 
-    out = Dense(3, activation='softmax')(h_star)
+    # out = Dense(3, activation='softmax')(h_star)
+    out = Dense(3, activation='softmax')(r_n)
     model = Model(input = input_node ,output = out)
     model.summary()
 
 #        graph = to_graph(model, show_shape=True)
 #        graph.write_png("model2.png")
 
-    model.compile(loss='categorical_crossentropy', optimizer=Adam(options.lr))
+    model.compile(loss='categorical_crossentropy', optimizer=Adam(options.lr),metrics=['accuracy'])
     return model
 
 

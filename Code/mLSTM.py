@@ -31,6 +31,7 @@ def time_distributed_dense(x, w,
     x = K.reshape(x, (-1, input_dim))
 
     x = K.dot(x, w)
+    
     x = K.repeat_elements( x.dimshuffle((0,'x',1)) , repeat_len, axis = 1)
     # reshape to 4D tensor
     x = K.reshape(x, (-1, timesteps,repeat_len,output_dim))
@@ -62,13 +63,16 @@ class mLSTM(Recurrent):
         self.output_dim = output_dim
         self.init = initializations.get(init)
         self.inner_init = initializations.get(inner_init)
-        self.W_regularizer = regularizers.get(W_regularizer)
+        self.W1_regularizer = regularizers.get(W_regularizer)
+        self.W2_regularizer = regularizers.get(W_regularizer)
         self.U_regularizer = regularizers.get(U_regularizer)
+        self.b_regularizer = regularizers.get(b_regularizer)
+
         self.dropout_W, self.dropout_U = dropout_W, dropout_U
 
         if self.dropout_W or self.dropout_U:
             self.uses_learning_phase = True
-        super(multiAttentionRNN, self).__init__(**kwargs)
+        super(mLSTM, self).__init__(**kwargs)
 
     def build(self, input_shape):
         self.input_spec = [InputSpec(shape=input_shape)]
@@ -93,25 +97,23 @@ class mLSTM(Recurrent):
         self.U_r = self.inner_init((self.output_dim, self.output_dim),
                                  name='{}_U_r'.format(self.name))
 
-        self.U_t = self.inner_init((self.output_dim, self.output_dim),
-                                 name='{}_U_t'.format(self.name))
         # mLSTM Initializations
-        self.W_i = self.init((input_dim + self.output_dim,self.output_dim),
+        self.W_i = self.init((self.output_dim + self.output_dim,self.output_dim),
                             name='{}_W_i'.format(self.name))
-        self.W_f = self.init((input_dim + self.output_dim,self.output_dim),
+        self.W_f = self.init((self.output_dim + self.output_dim,self.output_dim),
                             name='{}_W_f'.format(self.name))
-        self.W_o = self.init((input_dim + self.output_dim,self.output_dim),
+        self.W_o = self.init((self.output_dim + self.output_dim,self.output_dim),
                             name='{}_W_o'.format(self.name))
-        self.W_c = self.init((input_dim + self.output_dim,self.output_dim),
+        self.W_c = self.init((self.output_dim + self.output_dim,self.output_dim),
                             name='{}_W_c'.format(self.name))  
 
-        self.U_i = self.inner_init((input_dim, self.output_dim),
+        self.U_i = self.inner_init((self.output_dim, self.output_dim),
                                  name='{}_U_i'.format(self.name))
-        self.U_f = self.inner_init((input_dim, self.output_dim),
+        self.U_f = self.inner_init((self.output_dim, self.output_dim),
                                  name='{}_U_f'.format(self.name))
-        self.U_o = self.inner_init((input_dim, self.output_dim),
+        self.U_o = self.inner_init((self.output_dim, self.output_dim),
                                  name='{}_U_o'.format(self.name))
-        self.U_c = self.inner_init((input_dim, self.output_dim),
+        self.U_c = self.inner_init((self.output_dim, self.output_dim),
                                  name='{}_U_c'.format(self.name)) 
         
         self.b_i = K.zeros((self.output_dim,), name='{}_b_i'.format(self.name))
@@ -120,18 +122,19 @@ class mLSTM(Recurrent):
         self.b_c = K.zeros((self.output_dim,), name='{}_b_c'.format(self.name))                                                                                                                                                                                        
 
         self.regularizers = []
-        if self.W_regularizer:
-            self.W_regularizer.set_param(K.concatenate([self.W_y,
+        if self.W1_regularizer:
+            self.W1_regularizer.set_param(K.concatenate([self.W_y,
                                                         self.W_h,
-                                                        self.W,
-                                                        self.W_i,
+                                                        self.W
+                                                        ]))
+            self.regularizers.append(self.W1_regularizer)
+            self.W2_regularizer.set_param(K.concatenate([self.W_i,
                                                         self.W_f,
                                                         self.W_o,
                                                         self.W_c]))
-            self.regularizers.append(self.W_regularizer)
+            self.regularizers.append(self.W2_regularizer)
         if self.U_regularizer:
-            self.U_regularizer.set_param(K.concatenate([self.U_r,
-                                                        self.U_t,
+            self.U_regularizer.set_param(K.concatenate([self.U_r,                                                        
                                                         self.U_i,
                                                         self.U_f,
                                                         self.U_o,
@@ -145,7 +148,7 @@ class mLSTM(Recurrent):
             self.regularizers.append(self.b_regularizer)
 
         self.trainable_weights = [self.W_y, self.W_h, self.W,self.W_i,self.W_f,self.W_o,self.W_c,
-                                  self.U_r, self.U_t,self.U_i,self.U_f,self.U_o,self.U_c,
+                                  self.U_r, self.U_i,self.U_f,self.U_o,self.U_c,
                                   self.b_i,self.b_f,self.b_o,self.b_c]
 
         if self.initial_weights is not None:
@@ -176,9 +179,11 @@ class mLSTM(Recurrent):
 
     def step(self, x, states):
         h_tm1 = states[0]
-        B_U = states[1]
-        B_W = states[2]
+        c_tm1 = states[1]
+        B_U = states[2]
+        B_W = states[3]
 
+        h_tilde = x[:,0,:]
         L = K.params['xmaxlen']
 
         
@@ -189,8 +194,18 @@ class mLSTM(Recurrent):
         
         output = T.batched_dot(alpha,self.Y) 
         output = output[:,0,:]
-        #Figure out a way to get hk here... :(
-        return output, [output]
+        
+        xt = K.concatenate([h_tilde,output],axis = 1)
+
+        it = K.sigmoid( K.dot(xt,self.W_i) + K.dot(h_tilde,self.U_i) + self.b_i )
+        ft = K.sigmoid(K.dot(xt,self.W_f) + K.dot(h_tilde,self.U_f) + self.b_f)
+        ot = K.sigmoid(K.dot(xt,self.W_o) + K.dot(h_tilde,self.U_o) + self.b_o)
+        c_tilde_t = K.dot(xt,self.W_c) + K.dot(h_tilde,self.U_c) + self.b_c
+        c_t = ft * c_tm1 + it*K.tanh( c_tilde_t )
+
+        h_t = ot * K.tanh(c_t)
+
+        return h_t, [h_t,c_t]
 
     def get_constants(self, x):
         constants = []

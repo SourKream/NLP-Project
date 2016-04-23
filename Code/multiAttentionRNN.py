@@ -23,6 +23,19 @@ from reader import *
 from myutils import *
 import logging
 from datetime import datetime
+def time_distributed_dense(x, w,
+                           input_dim=None, output_dim=None, timesteps=None,repeat_len = None):
+    '''Apply y.w + b for every temporal slice y of x.
+    '''
+
+    # collapse time dimension and batch dimension together
+    x = K.reshape(x, (-1, input_dim))
+
+    x = K.dot(x, w)
+    x = K.repeat_elements( x.dimshuffle((0,'x',1)) , repeat_len, axis = 1)
+    # reshape to 4D tensor
+    x = K.reshape(x, (-1, timesteps,repeat_len,output_dim))
+    return x
 
 class multiAttentionRNN(Recurrent):
     '''
@@ -117,8 +130,12 @@ class multiAttentionRNN(Recurrent):
     def preprocess_input(self, x):
         self.Y = x[:,:K.params['xmaxlen'],:]
         x = x[:,K.params['xmaxlen']:,:]
-
-        return x
+        # self.precompute_W_y_y = K.dot(self.Y,self.W_y)
+        input_dim = x.shape[2]
+        timesteps = x.shape[1]
+        repeat_len = self.Y.shape[1]
+        return time_distributed_dense(x,self.W_h,input_dim,self.output_dim,timesteps,repeat_len)
+        # return x
 
     def step(self, x, states):
         r_tm1 = states[0]
@@ -127,7 +144,7 @@ class multiAttentionRNN(Recurrent):
 
         L = K.params['xmaxlen']
 
-        M = K.tanh(K.dot(self.Y, self.W_y) + K.repeat_elements(K.dot(x, self.W_h).dimshuffle((0,'x',1)),L, axis=1) + K.repeat_elements(K.dot(r_tm1, self.U_r).dimshuffle((0,'x',1)),L, axis=1))
+        M = K.tanh(K.dot(self.Y,self.W_y) + x + K.repeat_elements(K.dot(r_tm1, self.U_r).dimshuffle((0,'x',1)),L, axis=1))
 
         alpha = K.dot(M, self.W)
         alpha = K.softmax(alpha[:,:,0]) 

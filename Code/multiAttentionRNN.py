@@ -130,7 +130,7 @@ class multiAttentionRNN(Recurrent):
     def preprocess_input(self, x):
         self.Y = x[:,:K.params['xmaxlen'],:]
         x = x[:,K.params['xmaxlen']:,:]
-        # self.precompute_W_y_y = K.dot(self.Y,self.W_y)
+        self.precompute_W_y_y = K.dot(self.Y,self.W_y)
         input_dim = x.shape[2]
         timesteps = x.shape[1]
         repeat_len = self.Y.shape[1]
@@ -144,8 +144,8 @@ class multiAttentionRNN(Recurrent):
 
         L = K.params['xmaxlen']
 
-        M = K.tanh(K.dot(self.Y,self.W_y) + x + K.repeat_elements(K.dot(r_tm1, self.U_r).dimshuffle((0,'x',1)),L, axis=1))
-
+        # M = K.tanh(K.dot(self.Y,self.W_y) + x + K.repeat_elements(K.dot(r_tm1, self.U_r).dimshuffle((0,'x',1)),L, axis=1))
+        M = K.tanh(self.precompute_W_y_y + x + K.repeat_elements(K.dot(r_tm1, self.U_r).dimshuffle((0,'x',1)),L, axis=1))
         alpha = K.dot(M, self.W)
         alpha = K.softmax(alpha[:,:,0]) 
         alpha = alpha.dimshuffle((0,'x',1))

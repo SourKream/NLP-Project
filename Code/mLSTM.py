@@ -180,12 +180,9 @@ class mLSTM(Recurrent):
     def step(self, x, states):
         h_tm1 = states[0]
         c_tm1 = states[1]
-        B_U = states[2]
-        B_W = states[3]
 
         h_tilde = x[:,0,:]
         L = K.params['xmaxlen']
-
         
         M = K.tanh(self.precompute_W_y_y + x + K.repeat_elements(K.dot(h_tm1, self.U_r).dimshuffle((0,'x',1)),L, axis=1))
         alpha = K.dot(M, self.W)

@@ -1,5 +1,6 @@
 .DS_Store
 *.pyc
+*.npy
 *.log
 snli_1.0.zip
 train.txt
@@ -8,3 +9,4 @@ dev.txt
 VocabMat.npy
 Logs/
 Models/
+*process.py

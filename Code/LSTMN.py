@@ -244,8 +244,8 @@ class LSTMN(Recurrent):
         # h_tild_tm1 -> BT, k       
 
         if self.H_tape is None:
-            self.H_tape = K.zeros_like(x_new).dimshuffle((0,'x',1))
-            self.C_tape = K.zeros_like(x_new).dimshuffle((0,'x',1))
+            self.H_tape = K.zeros_like(h_tild_tm1).dimshuffle((0,'x',1))
+            self.C_tape = K.zeros_like(h_tild_tm1).dimshuffle((0,'x',1))
 
         # s_t -> BT, t-1, 1
         t = K.shape(self.C_tape)[1]

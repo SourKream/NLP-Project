@@ -139,13 +139,13 @@ class multiAttentionRNN(Recurrent):
 
     def step(self, x, states):
         r_tm1 = states[0]
-        B_U = states[1]
-        B_W = states[2]
+        # B_U = states[1]
+        # B_W = states[2]
 
         L = K.params['xmaxlen']
 
         # M = K.tanh(K.dot(self.Y,self.W_y) + x + K.repeat_elements(K.dot(r_tm1, self.U_r).dimshuffle((0,'x',1)),L, axis=1))
-        M = K.tanh(self.precompute_W_y_y + x + K.repeat_elements(K.dot(r_tm1, self.U_r).dimshuffle((0,'x',1)),L, axis=1))
+        M = K.tanh(self.precompute_W_y_y + K.repeat_elements(K.dot(x,self.W_h).dimshuffle((0,'x',1)),L,axis=1) + K.repeat_elements(K.dot(r_tm1, self.U_r).dimshuffle((0,'x',1)),L, axis=1))
         alpha = K.dot(M, self.W)
         alpha = K.softmax(alpha[:,:,0]) 
         alpha = alpha.dimshuffle((0,'x',1))

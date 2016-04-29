@@ -18,17 +18,17 @@ from reader import *
 from myutils import *
 import logging
 from datetime import datetime
-from multiAttentionRNN import multiAttentionRNN
+from LSTMN import LSTMN
 
 def get_params():
     parser = argparse.ArgumentParser(description='Short sample app')
-    parser.add_argument('-lstm', action="store", default=150, dest="lstm_units", type=int)
+    parser.add_argument('-lstm', action="store", default=300, dest="lstm_units", type=int)
     parser.add_argument('-epochs', action="store", default=20, dest="epochs", type=int)
     parser.add_argument('-batch', action="store", default=32, dest="batch_size", type=int)
     parser.add_argument('-xmaxlen', action="store", default=30, dest="xmaxlen", type=int)
     parser.add_argument('-ymaxlen', action="store", default=20, dest="ymaxlen", type=int)
     parser.add_argument('-nopad', action="store", default=False, dest="no_padding", type=bool)
-    parser.add_argument('-lr', action="store", default=0.003, dest="lr", type=float)
+    parser.add_argument('-lr', action="store", default=0.001, dest="lr", type=float)
     parser.add_argument('-load', action="store", default=False, dest="load_save", type=bool)
     parser.add_argument('-verbose', action="store", default=False, dest="verbose", type=bool)
     parser.add_argument('-l2', action="store", default=0.0003, dest="l2", type=float)
@@ -71,7 +71,7 @@ def get_R(X):
 
 def build_model(opts, verbose=False):
 
-    k = 2 * opts.lstm_units
+    k = opts.lstm_units
     L = opts.xmaxlen
     N = opts.xmaxlen + opts.ymaxlen + 1  # for delim
     print "x len", L, "total len", N
@@ -81,38 +81,93 @@ def build_model(opts, verbose=False):
     if opts.local:
         InitWeights = np.load('VocabMat.npy')
     else:   
-        InitWeights = np.load('/home/ee/btech/ee1130798/Code/VocabMat.npy')
+        InitWeights = np.load('/home/cse/btech/cs1130773/Code/VocabMat.npy')
 
     emb = Embedding(InitWeights.shape[0],InitWeights.shape[1],input_length=N,weights=[InitWeights])(input_node)
     d_emb = Dropout(0.1)(emb)
 
-    forward = LSTM(opts.lstm_units,return_sequences=True)(d_emb)
-    backward = LSTM(opts.lstm_units,return_sequences=True,go_backwards=True)(d_emb)
-    forward_backward = merge([forward,backward],mode='concat',concat_axis=2)
-    dropout = Dropout(0.1)(forward_backward)
-    Y = Lambda(get_Y,output_shape=(L,k))(dropout)
-    H = Lambda(get_H_hypo,output_shape=(N-L,k))(dropout)
-    WH = TimeDistributed(Dense(k,W_regularizer=l2(0.01)))(H)
-    YWH = merge([Y,WH],mode='concat',concat_axis=1)
+    premise = Lambda(get_Y,output_shape=(L, 300))(d_emb)
+    hypothesis = Lambda(get_H_hypo, output_shape=(N-L, 300))(d_emb)
 
-    h_n = Lambda(get_H_n,output_shape=(k,))(dropout)
+    Y = LSTMN(opts.lstm_units,return_sequences=True)(premise)
 
-    r_n = multiAttentionRNN(k, return_sequences=False)(YWH)
+    h_hypo = LSTMN(opts.lstm_units,return_sequences=True)(hypothesis)
+
+    WY = TimeDistributed(Dense(k,W_regularizer=l2(0.01)))(Y)
+    Wh_hypo = TimeDistributed(Dense(k,W_regularizer=l2(0.01)))(h_hypo)
+
+    # GET R1
+    f = get_WH_Lpi(0)
+    Wh_lp = [Lambda(f, output_shape=(k,))(Wh_hypo)]
+    Wh_lp_cross_e = [RepeatVector(L)(Wh_lp[0])]
+
+    Sum_Wh_lp_cross_e_WY = [merge([Wh_lp_cross_e[0], WY],mode='sum')]
+    M = [Activation('tanh')(Sum_Wh_lp_cross_e_WY[0])]    
+
+#    alpha_TimeDistributedDense_Layer = TimeDistributed(Dense(1,activation='softmax'))
+    Distributed_Dense_init_weight = ((2.0/np.sqrt(k)) * np.random.rand(k,1)) - (1.0 / np.sqrt(k))
+    Distributed_Dense_init_bias = ((2.0) * np.random.rand(1,)) - (1.0)
+    alpha = [TimeDistributed(Dense(1,activation='softmax', weights=[Distributed_Dense_init_weight, Distributed_Dense_init_bias]), name='alpha1')(M[0])]
+
+    Join_Y_alpha = [merge([Y, alpha[0]],mode='concat',concat_axis=2)]    
+    _r = [Lambda(get_R, output_shape=(k,1))(Join_Y_alpha[0])]
+    r = [Reshape((k,))(_r[0])]
+
+    r_t_h_t = [Reshape((1,2*k))(merge([r[0], Wh_lp[0]], mode='concat', concat_axis=1))]
+
+    concat_r_t_h_t = [r_t_h_t[0]]
 
 
-    Wr = Dense(k,W_regularizer=l2(0.01))(r_n) 
-    Wh = Dense(k,W_regularizer=l2(0.01))(h_n)
-    Sum_Wr_Wh = merge([Wr, Wh],mode='sum')
-    h_star = Activation('tanh')(Sum_Wr_Wh)    
+    mLSTM_init_weight = [((2.0/np.sqrt(k)) * np.random.rand(2*k,k)) - (1.0 / np.sqrt(k)),
+                        ((2.0/np.sqrt(k)) * np.random.rand(k,k)) - (1.0 / np.sqrt(k)),
+                        ((2.0) * np.random.rand(k,)) - (1.0),
+                        ((2.0/np.sqrt(k)) * np.random.rand(2*k,k)) - (1.0 / np.sqrt(k)),
+                        ((2.0/np.sqrt(k)) * np.random.rand(k,k)) - (1.0 / np.sqrt(k)),
+                        ((2.0) * np.random.rand(k,)) - (1.0),
+                        ((2.0/np.sqrt(k)) * np.random.rand(2*k,k)) - (1.0 / np.sqrt(k)),
+                        ((2.0/np.sqrt(k)) * np.random.rand(k,k)) - (1.0 / np.sqrt(k)),
+                        ((2.0) * np.random.rand(k,)) - (1.0),
+                        ((2.0/np.sqrt(k)) * np.random.rand(2*k,k)) - (1.0 / np.sqrt(k)),
+                        ((2.0/np.sqrt(k)) * np.random.rand(k,k)) - (1.0 / np.sqrt(k)),
+                        ((2.0) * np.random.rand(k,)) - (1.0)]
 
-    out = Dense(3, activation='softmax')(h_star)
+    h_a = [LSTM(k, name='mLSTM_1', weights=mLSTM_init_weight)(r_t_h_t[0])]
+
+    Wr_init_weight = 2*(1/np.sqrt(k))*np.random.rand(k,k) - (1/np.sqrt(k))
+    Wr_init_bias = 2*(1/np.sqrt(k))*np.random.rand(k,) - (1/np.sqrt(k))
+    Wh_a = [Dense(k,W_regularizer=l2(0.01), name='Wh_a1', weights=[Wr_init_weight, Wr_init_bias])(h_a[0])]
+    Wh_a_cross_e = [RepeatVector(L)(Wh_a[0])]
+
+    # GET R2, R3, .. R_N
+    for i in range(2,N-L+1):
+        f = get_WH_Lpi(i-1)
+        Wh_lp.append( Lambda(f, output_shape=(k,))(Wh_hypo) )
+        Wh_lp_cross_e.append( RepeatVector(L)(Wh_lp[i-1]) )
+
+        Sum_Wh_lp_cross_e_WY.append( merge([Wh_lp_cross_e[i-1], WY, Wh_a_cross_e[i-2]],mode='sum') )
+        M.append( Activation('tanh')(  Sum_Wh_lp_cross_e_WY[i-1] ) )
+        alpha.append( TimeDistributed(Dense(1,activation='softmax'), name='alpha'+str(i))(M[i-1]) )
+
+        Join_Y_alpha.append( merge([Y, alpha[i-1]],mode='concat',concat_axis=2) )
+        _r.append( Lambda(get_R, output_shape=(k,1))(Join_Y_alpha[i-1]) )
+        r.append( Reshape((k,))(_r[i-1]) )
+
+        r_t_h_t.append( Reshape((1,2*k))(merge([r[i-1], Wh_lp[i-1]], mode='concat', concat_axis=1)) )
+
+        concat_r_t_h_t.append( merge([concat_r_t_h_t[i-2], r_t_h_t[i-1]], mode='concat', concat_axis=1) )
+
+        h_a.append( LSTM(k, name='mLSTM_'+str(i), weights=mLSTM_init_weight)(concat_r_t_h_t[i-1]) )
+
+        if i != (N-L):
+#            Tan_Wr.append( Dense(k,W_regularizer=l2(0.01),activation='tanh', name='Tan_Wr'+str(i))(r[i-1]) )
+            Wh_a.append( Dense(k,W_regularizer=l2(0.01), name='Wh_a'+str(i), weights=[Wr_init_weight, Wr_init_bias])(h_a[i-1]) )
+            Wh_a_cross_e.append( RepeatVector(L)(Wh_a[i-1]) )
+
+    out = Dense(3, activation='softmax')(h_a[N-L-1])
     model = Model(input = input_node ,output = out)
     model.summary()
 
-#        graph = to_graph(model, show_shape=True)
-#        graph.write_png("model2.png")
-
-    model.compile(loss='categorical_crossentropy', optimizer=Adam(options.lr))
+    model.compile(loss='categorical_crossentropy', optimizer=Adam(options.lr), metrics=['accuracy'])
     return model
 
 
@@ -182,10 +237,16 @@ class WeightSharing(Callback):
                 return l
 
     def on_batch_end(self, batch, logs={}):
-        weights = np.mean([self.find_layer_by_name(n).get_weights()[0] for n in self.shared],axis=0)
-        biases = np.mean([self.find_layer_by_name(n).get_weights()[1] for n in self.shared],axis=0)
+        avg_weights = []
+        for i in xrange(len(self.find_layer_by_name(self.shared[0]).get_weights())):
+            weights = np.mean([self.find_layer_by_name(n).get_weights()[i] for n in self.shared[-5:]],axis=0)
+            avg_weights.append(weights)
         for n in self.shared:
-            self.find_layer_by_name(n).set_weights([weights, biases])
+            self.find_layer_by_name(n).set_weights(avg_weights)
+
+class WeightSave(Callback):
+    def on_epoch_end(self,epochs, logs={}):
+        self.model.save_weights("/home/cse/btech/cs1130773/Code/WeightsShallowFusionMLSTM/weight_on_epoch_" +str(epochs) +  ".weights") 
 
 if __name__ == "__main__":
     options=get_params()
@@ -195,15 +256,15 @@ if __name__ == "__main__":
         dev=[l.strip().split('\t') for l in open('../Data/tinyVal.txt')]
         test=[l.strip().split('\t') for l in open('../Data/tinyTest.txt')]
     else:
-        train=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/train.txt')]
-        dev=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/dev.txt')]
-        test=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/test.txt')]
+        train=[l.strip().split('\t') for l in open('/home/cse/btech/cs1130773/Code/train.txt')]
+        dev=[l.strip().split('\t') for l in open('/home/cse/btech/cs1130773/Code/dev.txt')]
+        test=[l.strip().split('\t') for l in open('/home/cse/btech/cs1130773/Code/test.txt')]
 
     if options.local:
         with open('Dictionary.txt','r') as inf:
             vocab = eval(inf.read())
     else:
-        with open('/home/ee/btech/ee1130798/Code/Dictionary.txt','r') as inf:
+        with open('/home/cse/btech/cs1130773/Code/Dictionary.txt') as inf:
             vocab = eval(inf.read())
 
     print "vocab size: ",len(vocab)
@@ -285,16 +346,21 @@ if __name__ == "__main__":
         group2 = []
         group3 = []
         for i in range(1,options.ymaxlen+1):
-            group1.append('Tan_Wr'+str(i))
-            group2.append('Wr'+str(i))
+            group1.append('mLSTM_'+str(i))
+            group2.append('Wh_a'+str(i))
             group3.append('alpha'+str(i))
         group3.append('alpha'+str(options.ymaxlen+1))
+        group1.append('mLSTM_'+str(options.ymaxlen+1))
 
+        save_weights = WeightSave()
+        
         history = model.fit(x=net_train, 
                             y=Z_train,
                         batch_size=options.batch_size,
                         nb_epoch=options.epochs,
-                        validation_data=dev_dict)
+                        validation_data=dev_dict,
+                        callbacks = [WeightSharing(group1), WeightSharing(group2), WeightSharing(group3), save_weights])
+#                       )
 
         train_acc=compute_acc(net_train, Z_train, vocab, model, options)
         dev_acc=compute_acc(net_dev, Z_dev, vocab, model, options)

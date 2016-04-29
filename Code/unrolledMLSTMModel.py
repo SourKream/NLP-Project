@@ -80,7 +80,7 @@ def build_model(opts, verbose=False):
     if opts.local:
         InitWeights = np.load('VocabMat.npy')
     else:   
-        InitWeights = np.load('/home/ee/btech/ee1130798/Code/VocabMat.npy')
+        InitWeights = np.load('/home/cse/btech/cs1130773/Code/VocabMat.npy')
 
     emb = Embedding(InitWeights.shape[0],InitWeights.shape[1],input_length=N,weights=[InitWeights])(input_node)
     d_emb = Dropout(0.1)(emb)
@@ -264,23 +264,27 @@ class WeightSharing(Callback):
         for n in self.shared:
             self.find_layer_by_name(n).set_weights(avg_weights)
 
+class WeightSave(Callback):
+    def on_epoch_end(self,epochs, logs={}):
+        self.model.save_weights("/home/cse/btech/cs1130773/Code/WeightsUnrolledMLSTM/weight_on_epoch_" +str(epochs) +  ".weights") 
+
 if __name__ == "__main__":
     options=get_params()
 
     if options.local:
-        train=[l.strip().split('\t') for l in open('Train.txt')]
-        dev=[l.strip().split('\t') for l in open('Dev.txt')]
-        test=[l.strip().split('\t') for l in open('Test.txt')]
+        train=[l.strip().split('\t') for l in open('../Data/tinyTrain.txt')]
+        dev=[l.strip().split('\t') for l in open('../Data/tinyVal.txt')]
+        test=[l.strip().split('\t') for l in open('../Data/tinyTest.txt')]
     else:
-        train=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/train.txt')]
-        dev=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/dev.txt')]
-        test=[l.strip().split('\t') for l in open('/home/ee/btech/ee1130798/Code/test.txt')]
+        train=[l.strip().split('\t') for l in open('/home/cse/btech/cs1130773/Code/train.txt')]
+        dev=[l.strip().split('\t') for l in open('/home/cse/btech/cs1130773/Code/dev.txt')]
+        test=[l.strip().split('\t') for l in open('/home/cse/btech/cs1130773/Code/test.txt')]
 
     if options.local:
         with open('Dictionary.txt','r') as inf:
             vocab = eval(inf.read())
     else:
-        with open('/home/ee/btech/ee1130798/Code/Dictionary.txt','r') as inf:
+        with open('/home/cse/btech/cs1130773/Code/Dictionary.txt') as inf:
             vocab = eval(inf.read())
 
     print "vocab size: ",len(vocab)
@@ -368,12 +372,14 @@ if __name__ == "__main__":
         group3.append('alpha'+str(options.ymaxlen+1))
         group1.append('mLSTM_'+str(options.ymaxlen+1))
 
+        save_weights = WeightSave()
+
         history = model.fit(x=net_train, 
                             y=Z_train,
                         batch_size=options.batch_size,
                         nb_epoch=options.epochs,
                         validation_data=dev_dict,
-                        callbacks=[WeightSharing(group1), WeightSharing(group2), WeightSharing(group3)])
+                        callbacks=[WeightSharing(group1), WeightSharing(group2), WeightSharing(group3), save_weights])
 
         train_acc=compute_acc(net_train, Z_train, vocab, model, options)
         dev_acc=compute_acc(net_dev, Z_dev, vocab, model, options)

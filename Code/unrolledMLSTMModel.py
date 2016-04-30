@@ -18,6 +18,7 @@ from reader import *
 from myutils import *
 import logging
 from datetime import datetime
+import pdb
 
 def get_params():
     parser = argparse.ArgumentParser(description='Short sample app')
@@ -112,11 +113,10 @@ def build_model(opts, verbose=False):
 #    alpha_TimeDistributedDense_Layer = TimeDistributed(Dense(1,activation='softmax'))
     Distributed_Dense_init_weight = ((2.0/np.sqrt(k)) * np.random.rand(k,1)) - (1.0 / np.sqrt(k))
     Distributed_Dense_init_bias = ((2.0) * np.random.rand(1,)) - (1.0)
-    alpha = [TimeDistributed(Dense(1,activation='softmax', weights=[Distributed_Dense_init_weight, Distributed_Dense_init_bias]), name='alpha1')(M[0])]
+    alpha = [Reshape((L, 1), input_shape=(L,))(Activation("softmax")(Flatten()(TimeDistributed(Dense(1, weights=[Distributed_Dense_init_weight, Distributed_Dense_init_bias]), name='alpha1')(M[0]))))]
 
     Join_Y_alpha = [merge([Y, alpha[0]],mode='concat',concat_axis=2)]    
-    _r = [Lambda(get_R, output_shape=(k,1))(Join_Y_alpha[0])]
-    r = [Reshape((k,))(_r[0])]
+    r = [ Lambda(get_R, output_shape=(k,),name="r1")(Join_Y_alpha[0]) ]
 
     r_t_h_t = [Reshape((1,2*k))(merge([r[0], Wh_lp[0]], mode='concat', concat_axis=1))]
 
@@ -157,11 +157,10 @@ def build_model(opts, verbose=False):
 
         Sum_Wh_lp_cross_e_WY.append( merge([Wh_lp_cross_e[i-1], WY, Wh_a_cross_e[i-2]],mode='sum') )
         M.append( Activation('tanh')(  Sum_Wh_lp_cross_e_WY[i-1] ) )
-        alpha.append( TimeDistributed(Dense(1,activation='softmax'), name='alpha'+str(i))(M[i-1]) )
+        alpha.append( Reshape((L, 1), input_shape=(L,))(Activation("softmax")(Flatten()(TimeDistributed(Dense(1, weights=[Distributed_Dense_init_weight, Distributed_Dense_init_bias]), name='alpha'+str(i))(M[i-1])))) )
 
         Join_Y_alpha.append( merge([Y, alpha[i-1]],mode='concat',concat_axis=2) )
-        _r.append( Lambda(get_R, output_shape=(k,1))(Join_Y_alpha[i-1]) )
-        r.append( Reshape((k,))(_r[i-1]) )
+        r.append( Lambda(get_R, output_shape=(k,),name="r"+str(i))(Join_Y_alpha[i-1]) )
 
         r_t_h_t.append( Reshape((1,2*k))(merge([r[i-1], Wh_lp[i-1]], mode='concat', concat_axis=1)) )
 
@@ -188,11 +187,19 @@ def build_model(opts, verbose=False):
 #        graph.write_png("model2.png")
 
     model.compile(loss='categorical_crossentropy', optimizer=Adam(options.lr), metrics=['accuracy'])
+
+    ## Getting Alphas
+#    print "Loading Weights..."
+#    MODEL_WGHT = "/Users/Shantanu/Documents/College/SemVI/COL772/Project/Code/Models/UnrolledMLSTM/weight_on_epoch_7.weights"
+#    model.load_weights(MODEL_WGHT)
+#    AlphaModel = Model(input = input_node, output = alpha)
+#    AlphaModel.compile(loss='categorical_crossentropy', optimizer=Adam(options.lr), metrics=['accuracy'])
+
     return model
 
 
 def compute_acc(X, Y, vocab, model, opts, filename=None):
-    scores=model.predict(X,batch_size=options.batch_size)
+    scores=model.predict(X,batch_size=9)
     prediction=np.zeros(scores.shape)
     for i in range(scores.shape[0]):
         l=np.argmax(scores[i])
@@ -204,7 +211,7 @@ def compute_acc(X, Y, vocab, model, opts, filename=None):
 
     if filename!=None:
         f = open(filename,'w')
-        for i in range(len(X)):
+        for i in range(len(scores)):
             f.write(map_to_txt(X[i],vocab)+ " : "+ str(plabels[i])+ "\n")
         f.close()
 
@@ -266,15 +273,15 @@ class WeightSharing(Callback):
 
 class WeightSave(Callback):
     def on_epoch_end(self,epochs, logs={}):
-        self.model.save_weights("/home/cse/btech/cs1130773/Code/WeightsUnrolledMLSTM/weight_on_epoch_" +str(epochs) +  ".weights") 
+        self.model.save_weights("/home/cse/btech/cs1130773/Code/WeightsUnrolledMLSTM/BEST_weight_on_epoch_" +str(epochs) +  ".weights") 
 
 if __name__ == "__main__":
     options=get_params()
 
     if options.local:
-        train=[l.strip().split('\t') for l in open('../Data/tinyTrain.txt')]
-        dev=[l.strip().split('\t') for l in open('../Data/tinyVal.txt')]
-        test=[l.strip().split('\t') for l in open('../Data/tinyTest.txt')]
+        train=[l.strip().split('\t') for l in open('tiny_train.txt')]
+        dev=[l.strip().split('\t') for l in open('Dev.txt')]
+        test=[l.strip().split('\t') for l in open('Test.txt')]
     else:
         train=[l.strip().split('\t') for l in open('/home/cse/btech/cs1130773/Code/train.txt')]
         dev=[l.strip().split('\t') for l in open('/home/cse/btech/cs1130773/Code/dev.txt')]
@@ -296,10 +303,10 @@ if __name__ == "__main__":
     setattr(K,'params',params)
 
     config_str = getConfig(options)
-    MODEL_ARCH = "/home/ee/btech/ee1130798/Code/Models/ATRarch_att" + config_str + ".yaml"
-    MODEL_WGHT = "/home/ee/btech/ee1130798/Code/Models/ATRweights_att" + config_str + ".weights"
+#    MODEL_ARCH = "/home/ee/btech/ee1130798/Code/Models/ATRarch_att" + config_str + ".yaml"
+#    MODEL_WGHT = "/home/ee/btech/ee1130798/Code/Models/ATRweights_att" + config_str + ".weights"
 #    MODEL_ARCH = "/Users/Shantanu/Documents/College/SemVI/COL772/Project/Code/Models/GloveEmbd/arch_att" + config_str + ".yaml"
-#    MODEL_WGHT = "/Users/Shantanu/Documents/College/SemVI/COL772/Project/Code/Models/GloveEmbd/weights_att" + config_str + ".weights"
+    MODEL_WGHT = "/Users/Shantanu/Documents/College/SemVI/COL772/Project/Code/Models/UnrolledMLSTM/weight_on_epoch_7.weights"
    
     XMAXLEN=options.xmaxlen
     YMAXLEN=options.ymaxlen
@@ -345,22 +352,34 @@ if __name__ == "__main__":
 #                X_train = data2vec(net_train[idx:idx+batch_size], RMatrix)
 #                yield {'input': X_train, 'output': Z_train}
 
-    if options.load_save and os.path.exists(MODEL_ARCH) and os.path.exists(MODEL_WGHT):
+    print options.load_save
+    print os.path.exists(MODEL_WGHT)
+
+    if options.load_save and os.path.exists(MODEL_WGHT):
         print("Loading pre-trained model from ", MODEL_WGHT)
         model = build_model(options)
-        model.load_weights(MODEL_WGHT)
+#        model.load_weights(MODEL_WGHT)
+        print "Loaded Weights"
+        pdb.set_trace()
 
-        train_acc=compute_acc(net_train, Z_train, vocab, model, options)
-        dev_acc=compute_acc(net_dev, Z_dev, vocab, model, options)
-        test_acc=compute_acc(net_test, Z_test, vocab, model, options, "Test_Predictions.txt")
-        print "Training Accuracy: ", train_acc
-        print "Dev Accuracy: ", dev_acc
-        print "Testing Accuracy: ", test_acc
+        scores=model.predict(net_train,batch_size=9)
+
+        f = open("THISISWORKING.txt",'w')
+        for i in range(len(scores)):
+            f.write(str(scores[i])+"\n")
+        f.close()
+
+        print "DONE"
+#        train_acc=compute_acc(net_train, Z_train, vocab, model, options)
+#        dev_acc=compute_acc(net_dev, Z_dev, vocab, model, options)
+#        test_acc=compute_acc(net_test, Z_test, vocab, model, options)
+#        print "Training Accuracy: ", train_acc
+#        print "Dev Accuracy: ", dev_acc
+#        print "Testing Accuracy: ", test_acc
 
     else:
         print 'Build model...'
         model = build_model(options)
-
         print 'Training New Model'
         group1 = []
         group2 = []

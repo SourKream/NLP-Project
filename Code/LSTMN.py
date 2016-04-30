@@ -251,8 +251,10 @@ class LSTMN(Recurrent):
         t = K.shape(self.C_tape)[1]
 
         sum1 = K.dot(self.H_tape, self.W_h)
-        sum2 = K.dot(K.repeat_elements(x_new.dimshuffle((0,'x',1)),t, axis=1), self.W_x)
-        sum3 = K.dot(K.repeat_elements(h_tild_tm1.dimshuffle((0,'x',1)),t, axis=1), self.W_h_tilde)
+        sum2 = K.repeat_elements(K.dot(x_new, self.W_x).dimshuffle((0,'x',1)), t, axis=1)
+#        sum2 = K.dot(K.repeat_elements(x_new.dimshuffle((0,'x',1)),t, axis=1), self.W_x)
+        sum3 = K.repeat_elements(K.dot(h_tild_tm1, self.W_h_tilde).dimshuffle((0,'x',1)),t, axis=1)
+#        sum3 = K.dot(K.repeat_elements(h_tild_tm1.dimshuffle((0,'x',1)),t, axis=1), self.W_h_tilde)
         tanhed_sum = K.tanh(sum1 + sum2 + sum3)    
         a_t = K.dot(tanhed_sum, self.v)[:,:,0]
         s_t = K.softmax(a_t)

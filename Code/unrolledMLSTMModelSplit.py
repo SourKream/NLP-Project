@@ -90,7 +90,7 @@ def build_model(opts, verbose=False):
     raw_hypo = Lambda(get_H_hypo, output_shape=(N-L, k))(d_emb)
 
     premise = LSTM(opts.lstm_units,return_sequences=True)(raw_premise)
-    hypo = LSTM(opts.lstm_units,return_sequences=True,go_backwards=True)(raw_hypo)
+    hypo = LSTM(opts.lstm_units,return_sequences=True)(raw_hypo)
     all_h = merge([premise,hypo],mode='concat',concat_axis=1)
     dropout = Dropout(0.1)(all_h)
 
@@ -116,11 +116,10 @@ def build_model(opts, verbose=False):
 #    alpha_TimeDistributedDense_Layer = TimeDistributed(Dense(1,activation='softmax'))
     Distributed_Dense_init_weight = ((2.0/np.sqrt(k)) * np.random.rand(k,1)) - (1.0 / np.sqrt(k))
     Distributed_Dense_init_bias = ((2.0) * np.random.rand(1,)) - (1.0)
-    alpha = [TimeDistributed(Dense(1,activation='softmax', weights=[Distributed_Dense_init_weight, Distributed_Dense_init_bias]), name='alpha1')(M[0])]
+    alpha = [Reshape((L, 1), input_shape=(L,))(Activation("softmax")(Flatten()(TimeDistributed(Dense(1, weights=[Distributed_Dense_init_weight, Distributed_Dense_init_bias]), name='alpha1')(M[0]))))]
 
     Join_Y_alpha = [merge([Y, alpha[0]],mode='concat',concat_axis=2)]    
-    _r = [Lambda(get_R, output_shape=(k,1))(Join_Y_alpha[0])]
-    r = [Reshape((k,))(_r[0])]
+    r = [ Lambda(get_R, output_shape=(k,),name="r1")(Join_Y_alpha[0]) ]
 
     r_t_h_t = [Reshape((1,2*k))(merge([r[0], Wh_lp[0]], mode='concat', concat_axis=1))]
 
@@ -161,11 +160,10 @@ def build_model(opts, verbose=False):
 
         Sum_Wh_lp_cross_e_WY.append( merge([Wh_lp_cross_e[i-1], WY, Wh_a_cross_e[i-2]],mode='sum') )
         M.append( Activation('tanh')(  Sum_Wh_lp_cross_e_WY[i-1] ) )
-        alpha.append( TimeDistributed(Dense(1,activation='softmax'), name='alpha'+str(i))(M[i-1]) )
+        alpha.append( Reshape((L, 1), input_shape=(L,))(Activation("softmax")(Flatten()(TimeDistributed(Dense(1, weights=[Distributed_Dense_init_weight, Distributed_Dense_init_bias]), name='alpha'+str(i))(M[i-1])))) )
 
         Join_Y_alpha.append( merge([Y, alpha[i-1]],mode='concat',concat_axis=2) )
-        _r.append( Lambda(get_R, output_shape=(k,1))(Join_Y_alpha[i-1]) )
-        r.append( Reshape((k,))(_r[i-1]) )
+        r.append( Lambda(get_R, output_shape=(k,),name="r"+str(i))(Join_Y_alpha[i-1]) )
 
         r_t_h_t.append( Reshape((1,2*k))(merge([r[i-1], Wh_lp[i-1]], mode='concat', concat_axis=1)) )
 
@@ -270,7 +268,7 @@ class WeightSharing(Callback):
 
 class WeightSave(Callback):
     def on_epoch_end(self,epochs, logs={}):
-        self.model.save_weights("/home/ee/btech/ee1130798/Code/WeightsUnrolledMLSTMSplit/weight_on_epoch_" +str(epochs) +  ".weights") 
+        self.model.save_weights("/home/ee/btech/ee1130798/Code/WeightsUnrolledMLSTMSplit/no_reverse_weight_on_epoch_" +str(epochs) +  ".weights") 
 
 if __name__ == "__main__":
     options=get_params()
